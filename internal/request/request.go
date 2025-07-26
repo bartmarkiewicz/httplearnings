@@ -6,8 +6,18 @@ import (
 	"strings"
 )
 
+const BUFFER_SIZE = 8
+
+type ParsingStatus int
+
+const (
+	initialised ParsingStatus = iota
+	done
+)
+
 type Request struct {
-	RequestLine RequestLine
+	RequestLine   RequestLine
+	ParsingStatus ParsingStatus
 }
 
 type RequestLine struct {
@@ -17,31 +27,65 @@ type RequestLine struct {
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	requestBytes, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
+	buffer := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
+
+	readUpToIndex := 0
+
+	request := Request{ParsingStatus: initialised}
+
+	for request.ParsingStatus != done {
+		if cap(buffer) == len(buffer) {
+			temp := buffer
+			buffer = make([]byte, len(buffer)*2, len(buffer)*2)
+			copy(buffer, temp)
+		}
+
+		readBytes, err := reader.Read(buffer[readUpToIndex:])
+		if err == io.EOF {
+			request.ParsingStatus = done
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		readUpToIndex += readBytes
+		parsedBytes, err := request.parse(buffer[:readUpToIndex])
+		readUpToIndex = readUpToIndex - parsedBytes
+		copy(buffer, buffer[parsedBytes:])
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	requestLines := strings.Split(string(requestBytes), "\r\n")
-	//for _, line := range requestLines {
-	requestLine, err := parseRequestLine(requestLines[0])
-
-	if err != nil {
-		fmt.Println(err.Error())
-		return nil, err
-	}
-
-	request := Request{
-		RequestLine: *requestLine,
-	}
 	return &request, nil
-	//}
 }
 
-func parseRequestLine(line string) (*RequestLine, error) {
+func (r *Request) parse(data []byte) (int, error) {
+	if r.ParsingStatus == initialised {
+		parsedRequestLine, bytesParsed, err := parseRequestLine(string(data))
+		if err != nil {
+			return 0, err
+		} else if bytesParsed == 0 {
+			return 0, nil
+		}
+		r.RequestLine = *parsedRequestLine
+		r.ParsingStatus = done
+		return bytesParsed, nil
+	} else {
+		return 0, fmt.Errorf("request already parsed")
+	}
+}
+
+func parseRequestLine(lines string) (*RequestLine, int, error) {
+	if !strings.Contains(lines, "\r\n") {
+		return nil, 0, nil
+	}
+
+	line := strings.Split(lines, "\r\n")[0]
+
 	splitWords := strings.Split(line, " ")
 	if !isAllCapitalLetters(splitWords[0]) {
-		return nil, fmt.Errorf("could not extract method from line: %s", line)
+		return nil, 0, fmt.Errorf("could not extract method from line: %s", line)
 	}
 
 	method := splitWords[0]
@@ -49,7 +93,7 @@ func parseRequestLine(line string) (*RequestLine, error) {
 	splitHttpVersion := strings.Split(httpVersionString, "/")
 
 	if len(splitHttpVersion) != 2 || splitHttpVersion[1] != "1.1" || splitHttpVersion[0] != "HTTP" {
-		return nil, fmt.Errorf("request must be HTTP/1.1 got %s", httpVersionString)
+		return nil, 0, fmt.Errorf("request must be HTTP/1.1 got %s", httpVersionString)
 	}
 
 	requestTarget := splitWords[1]
@@ -59,7 +103,7 @@ func parseRequestLine(line string) (*RequestLine, error) {
 		RequestTarget: requestTarget,
 		Method:        method,
 	}
-	return &requestLine, nil
+	return &requestLine, len([]byte(line)), nil
 }
 
 func isAllCapitalLetters(s string) bool {
