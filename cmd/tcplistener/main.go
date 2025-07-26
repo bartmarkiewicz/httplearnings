@@ -51,7 +51,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 				if errors.Is(err, io.EOF) {
 					break
 				}
-				fmt.Printf("error: %s\n", err.Error())
+				fmt.Println(err.Error())
 				return
 			}
 			str := string(b[:n])
