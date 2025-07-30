@@ -1,6 +1,7 @@
 package request
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -41,11 +42,11 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		readBytes, err := reader.Read(buffer[readUpToIndex:])
-		if err == io.EOF {
-			request.ParsingStatus = done
-			break
-		}
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				request.ParsingStatus = done
+				break
+			}
 			return nil, err
 		}
 		readUpToIndex += readBytes

@@ -1,11 +1,9 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
+	"learnhttp/internal/request"
 	"net"
-	"strings"
 )
 
 func main() {
@@ -24,44 +22,12 @@ func main() {
 			return
 		}
 		fmt.Println("Connection accepted")
-		linesCh := getLinesChannel(accepted)
+		request, err := request.RequestFromReader(accepted)
 
-		for line := range linesCh {
-			fmt.Println(line)
-		}
+		fmt.Printf("Request line: \n- Method: %s\n- Target: %s\n- Version: %s\n",
+			request.RequestLine.Method, request.RequestLine.RequestTarget, request.RequestLine.HttpVersion)
 
 		fmt.Println("Connection closed")
 	}
 
-}
-
-func getLinesChannel(f io.ReadCloser) <-chan string {
-	lines := make(chan string)
-	go func() {
-		defer f.Close()
-		defer close(lines)
-		currentLineContents := ""
-		for {
-			b := make([]byte, 8, 8)
-			n, err := f.Read(b)
-			if err != nil {
-				if currentLineContents != "" {
-					lines <- currentLineContents
-				}
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				fmt.Println(err.Error())
-				return
-			}
-			str := string(b[:n])
-			parts := strings.Split(str, "\n")
-			for i := 0; i < len(parts)-1; i++ {
-				lines <- fmt.Sprintf("%s%s", currentLineContents, parts[i])
-				currentLineContents = ""
-			}
-			currentLineContents += parts[len(parts)-1]
-		}
-	}()
-	return lines
 }
