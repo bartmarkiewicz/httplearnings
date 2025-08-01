@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"learnhttp/internal/headers"
+	"strconv"
 	"strings"
 )
 
@@ -15,6 +16,7 @@ type ParsingStatus int
 const (
 	initialised ParsingStatus = iota
 	requestStateParsingHeaders
+	parsingBody
 	done
 )
 
@@ -22,6 +24,7 @@ type Request struct {
 	RequestLine   RequestLine
 	ParsingStatus ParsingStatus
 	Headers       headers.Headers
+	Body          []byte
 }
 
 type RequestLine struct {
@@ -101,9 +104,32 @@ func (r *Request) parseSingleLine(data []byte) (int, error) {
 			return 0, err
 		}
 		if isDone {
-			r.ParsingStatus = done
+			r.ParsingStatus = parsingBody
 		}
 		return bytesParsed, nil
+	case parsingBody:
+		contentLength := r.Headers.Get("content-length")
+		if contentLength == "" || contentLength == "0" {
+			r.ParsingStatus = done
+			return 0, nil
+		}
+
+		contentLengthNumber, err := strconv.Atoi(contentLength)
+		if err != nil {
+			return 0, fmt.Errorf("could not parse content-length header")
+		}
+		if len(r.Body) > contentLengthNumber {
+			return 0, fmt.Errorf("body is too long for content-length header: %s body length: %d", contentLength, len(r.Body))
+		}
+		if len(r.Body) == contentLengthNumber {
+			r.ParsingStatus = done
+			return 0, nil
+		}
+
+		if len(data) < contentLengthNumber {
+			r.Body = append(r.Body, data...)
+			return len(data), nil
+		}
 	case done:
 		return 0, fmt.Errorf("is done")
 	}
