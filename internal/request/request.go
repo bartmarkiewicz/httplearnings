@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"learnhttp/internal/headers"
 	"strings"
 )
 
@@ -13,12 +14,14 @@ type ParsingStatus int
 
 const (
 	initialised ParsingStatus = iota
+	requestStateParsingHeaders
 	done
 )
 
 type Request struct {
 	RequestLine   RequestLine
 	ParsingStatus ParsingStatus
+	Headers       headers.Headers
 }
 
 type RequestLine struct {
@@ -28,53 +31,83 @@ type RequestLine struct {
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
-	buffer := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
-
-	readUpToIndex := 0
-
-	request := Request{ParsingStatus: initialised}
-
-	for request.ParsingStatus != done {
-		if cap(buffer) == len(buffer) {
-			temp := buffer
-			buffer = make([]byte, len(buffer)*2, len(buffer)*2)
-			copy(buffer, temp)
+	buf := make([]byte, BUFFER_SIZE, BUFFER_SIZE)
+	readToIndex := 0
+	req := &Request{
+		ParsingStatus: initialised,
+		Headers:       headers.NewHeaders(),
+	}
+	for req.ParsingStatus != done {
+		if readToIndex >= len(buf) {
+			newBuf := make([]byte, len(buf)*2)
+			copy(newBuf, buf)
+			buf = newBuf
 		}
 
-		readBytes, err := reader.Read(buffer[readUpToIndex:])
+		numBytesRead, err := reader.Read(buf[readToIndex:])
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				request.ParsingStatus = done
+				if req.ParsingStatus != done {
+					return nil, fmt.Errorf("incomplete request")
+				}
 				break
 			}
 			return nil, err
 		}
-		readUpToIndex += readBytes
-		parsedBytes, err := request.parse(buffer[:readUpToIndex])
-		readUpToIndex = readUpToIndex - parsedBytes
-		copy(buffer, buffer[parsedBytes:])
+		readToIndex += numBytesRead
+
+		numBytesParsed, err := req.parse(buf[:readToIndex])
 		if err != nil {
 			return nil, err
 		}
+
+		copy(buf, buf[numBytesParsed:])
+		readToIndex -= numBytesParsed
 	}
-
-	return &request, nil
+	return req, nil
 }
-
 func (r *Request) parse(data []byte) (int, error) {
-	if r.ParsingStatus == initialised {
-		parsedRequestLine, bytesParsed, err := parseRequestLine(string(data))
+	totalBytesParsed := 0
+	for r.ParsingStatus != done {
+		parsedBytes, err := r.parseSingleLine(data[totalBytesParsed:])
 		if err != nil {
 			return 0, err
-		} else if bytesParsed == 0 {
+		}
+		totalBytesParsed += parsedBytes
+		if parsedBytes == 0 {
+			// wait for more bytes
+			break
+		}
+	}
+	return totalBytesParsed, nil
+}
+
+func (r *Request) parseSingleLine(data []byte) (int, error) {
+	switch r.ParsingStatus {
+	case initialised:
+		requestLine, bytesParsed, err := parseRequestLine(string(data))
+		if err != nil {
+			return 0, err
+		}
+		if bytesParsed == 0 {
 			return 0, nil
 		}
-		r.RequestLine = *parsedRequestLine
-		r.ParsingStatus = done
+		r.RequestLine = *requestLine
+		r.ParsingStatus = requestStateParsingHeaders
 		return bytesParsed, nil
-	} else {
-		return 0, fmt.Errorf("request already parsed")
+	case requestStateParsingHeaders:
+		bytesParsed, isDone, err := r.Headers.Parse(data)
+		if err != nil {
+			return 0, err
+		}
+		if isDone {
+			r.ParsingStatus = done
+		}
+		return bytesParsed, nil
+	case done:
+		return 0, fmt.Errorf("is done")
 	}
+	return 0, nil
 }
 
 func parseRequestLine(lines string) (*RequestLine, int, error) {
@@ -104,7 +137,7 @@ func parseRequestLine(lines string) (*RequestLine, int, error) {
 		RequestTarget: requestTarget,
 		Method:        method,
 	}
-	return &requestLine, len([]byte(line)), nil
+	return &requestLine, len([]byte(line)) + 2, nil
 }
 
 func isAllCapitalLetters(s string) bool {

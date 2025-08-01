@@ -44,7 +44,7 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	key = strings.TrimSpace(key)
 
 	h.Set(key, string(value))
-	return indexOfEndOfLine + len(crlf), false, nil
+	return indexOfEndOfLine + 2, false, nil
 }
 
 func (h Headers) Set(key, value string) {
