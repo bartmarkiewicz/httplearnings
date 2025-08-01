@@ -16,18 +16,16 @@ func NewHeaders() Headers {
 }
 
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
-	idx := bytes.Index(data, []byte(crlf))
-	if idx == -1 {
+	indexOfEndOfLine := bytes.Index(data, []byte(crlf))
+	if indexOfEndOfLine == -1 {
 		return 0, false, nil
 	}
-	if idx == 0 {
-		// the empty line
-		// headers are done, consume the CRLF
+	if indexOfEndOfLine == 0 {
 		return 2, true, nil
 	}
 
-	parts := bytes.SplitN(data[:idx], []byte(":"), 2)
-	key := string(parts[0])
+	headerParts := bytes.SplitN(data[:indexOfEndOfLine], []byte(":"), 2)
+	key := string(headerParts[0])
 
 	if key != strings.TrimRight(key, " ") {
 		return 0, false, fmt.Errorf("invalid header name: %s", key)
@@ -38,15 +36,15 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 0, false, err
 	}
 
-	if !regexMatch {
-		return 0, false, fmt.Errorf("invalid header name: %s", key)
+	if !regexMatch || len(strings.Trim(key, " ")) <= 1 {
+		return 0, false, fmt.Errorf("invalid header: %s", key)
 	}
 
-	value := bytes.TrimSpace(parts[1])
+	value := bytes.TrimSpace(headerParts[1])
 	key = strings.TrimSpace(key)
 
 	h.Set(key, string(value))
-	return idx + 2, false, nil
+	return indexOfEndOfLine + len(crlf), false, nil
 }
 
 func (h Headers) Set(key, value string) {
